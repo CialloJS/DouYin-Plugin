@@ -69,8 +69,8 @@ const { config, configSave } = await makeConfig(
   },
   {
     tips: [
-      "欢迎使用 TRSS-Yunzai DouYin Plugin ! SDK：dmmdekkd",
-      "参考：https://github.com/dmmdekkd/douyin.ts",
+      "欢迎使用 TRSS-Yunzai DouYin Plugin ! SDK：CialloJS",
+      "参考：https://github.com/CialloJS/douyin.ts",
     ],
   },
 )

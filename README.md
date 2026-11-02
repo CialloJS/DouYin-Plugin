@@ -4,7 +4,7 @@
 
 TRSS-Yunzai 抖音适配器插件
 
-基于 [douyin.ts](https://github.com/dmmdekkd/douyin.ts) SDK，支持抖音私聊 / 群聊消息收发与事件处理
+基于 [douyin.ts](https://github.com/CialloJS/douyin.ts) SDK，支持抖音私聊 / 群聊消息收发与事件处理
 
 </div>
 
@@ -20,14 +20,14 @@ TRSS-Yunzai 抖音适配器插件
 推荐使用 git 进行安装，以方便后续使用 `#抖音bot更新` 升级：
 
 ```bash
-git clone --depth=1 https://github.com/dmmdekkd/DouYin-Plugin.git ./plugins/DouYin-Plugin
+git clone --depth=1 https://github.com/CialloJS/DouYin-Plugin.git ./plugins/DouYin-Plugin
 ```
 
 > [!NOTE]
 > 如果你的网络环境较差，无法连接到 Github，可以使用代理加速下载服务
 >
 > ```bash
-> git clone --depth=1 https://ghproxy.521002.xyz/https://github.com/dmmdekkd/DouYin-Plugin.git ./plugins/DouYin-Plugin
+> git clone --depth=1 https://ghproxy.521002.xyz/https://github.com/CialloJS/DouYin-Plugin.git ./plugins/DouYin-Plugin
 > ```
 
 #### 🔧 安装依赖
@@ -93,10 +93,10 @@ pnpm install
 本插件面向 TRSS-Yunzai 运行时。若你希望在其他框架中使用抖音相关能力，可参考以下项目：
 
 - [zhin-adapter-douyin](https://github.com/zhinjs/zhin-adapter-douyin)（Zhin 框架）
-- [karin-plugin-adapter-douyin](https://github.com/dmmdekkd/karin-plugin-adapter-douyin)（Karin 框架）
+- [karin-plugin-adapter-douyin](https://github.com/CialloJS/karin-plugin-adapter-douyin)（Karin 框架）
 
 ## 相关链接
 
 - 许可证：MIT（[LICENSE](LICENSE)）
-- SDK：https://github.com/dmmdekkd/douyin.ts
+- SDK：https://github.com/CialloJS/douyin.ts
 - TRSS-Yunzai：https://github.com/TimeRainStarSky/Yunzai
