@@ -1,5 +1,22 @@
 # 更新日志
 
+## 1.2.0 · 2026-11-07
+
+### 依赖
+
+- 升级 douyin.ts `0.6.8` → `0.6.9`：SDK 运行时整体重写，对外 facade 与消息体字段保持一致，破坏性变更为统一错误模型——所有失败改为抛 `SdkError`（`message` 恒为 `sdk`，真实原因在 `err.data` 的 `errorDesc` / `statusMsg` 等服务端响应字段），并新增导出 `isErr` / `chatIdOf` / `decryptCencMp4`
+
+### 适配
+
+- 错误日志与判定改用可读文本：新增 `sdkErrorText()` 从 `SdkError.data` 提取服务端原因，连接失败、好友/群列表获取、登录失败等提示不再只显示 `sdk`
+- 登录态失效判定迁移到 `SdkError.data`：cookie 失效时服务端返回的 `unexpected session length` 现位于错误体内部，`connect` / `loadFriend` / `loadGroup` 的自动移除账号与重登提示恢复正常
+- 发送失败提示可读化：`msg.send` / `msg.reply` 的传输层异常（`SdkError`）转成 `发送失败：<原因>` 上抛，业务拒绝仍按返回的 `statusCode` / `statusMsg` 上报
+- 消息发送与登录流程无需改动：`send` / `recall` 仍以 `statusCode` 返回业务结果，`ForwardNode`、媒体资源对象、`BotOpts`、`login()` 回调与 `session` 字段均与 `0.6.8` 一致
+
+### 版本
+
+- 插件版本 `1.1.1` → `1.2.0`
+
 ## 1.1.1 · 2026-11-02
 
 ### 依赖

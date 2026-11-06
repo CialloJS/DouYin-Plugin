@@ -19,6 +19,18 @@ const sdkSendable = new Set(["text", "image", "video", "file", "emoji", "share",
 // 富文本转义：嵌套合并转发需递归拼 HTML，在 JS 侧生成时防止昵称/文本注入标签
 const escHtml = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
 
+// douyin.ts 0.6.9 起失败统一抛 SdkError（message 恒为 "sdk"），真实原因在 data（服务端响应体 / 业务错误码）里；
+// 拼成可读文本，供日志展示与「登录态失效」判定使用
+function sdkErrorText(err) {
+  if (!err) return ""
+  const { message, data } = err
+  const text = [message]
+  if (typeof data === "string") text.push(data)
+  else if (data instanceof Uint8Array) text.push(Buffer.from(data).toString())
+  else if (data && typeof data === "object") text.push(data.errorDesc, data.statusMsg, data.status_msg, data.message)
+  return text.filter(i => typeof i === "string" && i).join(" ")
+}
+
 // 抖音资源代理：抖音 CDN 直链校验 Referer/Cookie，外部（Chromium 渲染、其它插件）直连会 403；
 // 挂在本机 HTTP 服务下统一补全请求头转发，带 skey 的私有图片/视频在代理内解密后再回吐
 const MEDIA_MOUNTED = Symbol.for("trss.douyin.media.mounted")
@@ -605,9 +617,15 @@ const adapter = new (class DouYinAdapter {
   // 发送单条消息体（reply 优先走引用回复），statusCode 非 0 抛错由调用方统一处理
   // 引用回复透传完整 body：SDK 0.6.7 起支持引用任意类型消息（图片/视频/文件等），@提及/@所有人随 body 一并生效
   async sendBody(data, { reply, body }) {
-    const ret = reply
-      ? await data.bot.sdk.msg.reply(data.chatId, reply, body)
-      : await data.bot.sdk.msg.send(data.chatId, body)
+    let ret
+    try {
+      ret = reply
+        ? await data.bot.sdk.msg.reply(data.chatId, reply, body)
+        : await data.bot.sdk.msg.send(data.chatId, body)
+    } catch (err) {
+      // 0.6.9 起传输层失败抛 SdkError（message 恒为 "sdk"），转成可读文本再上抛
+      throw new Error(`发送失败：${sdkErrorText(err)}`)
+    }
     Bot.makeLog("debug", ["发送消息返回", ret], data.self_id)
     if (ret.statusCode) throw new Error(`发送被拒：statusCode=${ret.statusCode} ${ret.statusMsg || ""}`)
     return ret
@@ -783,7 +801,7 @@ const adapter = new (class DouYinAdapter {
       if (ret.serverMessageId) rets.message_id.push(ret.serverMessageId)
     } catch (err) {
       Bot.makeLog("error", ["发送合并转发图片错误", err], data.self_id)
-      if (/HTTP 401|login|auth|登录|expire/i.test(String(err.message || err)))
+      if (/HTTP 401|login|auth|登录|expire/i.test(sdkErrorText(err)))
         Bot.makeLog("error", `${data.self_id} 登录状态已失效，请使用 #抖音bot登录 重新扫码`, data.self_id)
       rets.error.push(err)
     }
@@ -812,7 +830,7 @@ const adapter = new (class DouYinAdapter {
       else if (ret.serverMessageId) rets.message_id.push(ret.serverMessageId)
     } catch (err) {
       Bot.makeLog("error", ["发送合并转发错误", err], data.self_id)
-      if (/HTTP 401|login|auth|登录|expire/i.test(String(err.message || err)))
+      if (/HTTP 401|login|auth|登录|expire/i.test(sdkErrorText(err)))
         Bot.makeLog("error", `${data.self_id} 登录状态已失效，请使用 #抖音bot登录 重新扫码`, data.self_id)
       rets.error.push(err)
     }
@@ -838,7 +856,7 @@ const adapter = new (class DouYinAdapter {
         if (ret.serverMessageId) rets.message_id.push(ret.serverMessageId)
       } catch (err) {
         Bot.makeLog("error", ["发送消息错误", i.body, err], data.self_id)
-        if (/HTTP 401|login|auth|登录|expire/i.test(String(err.message || err)))
+        if (/HTTP 401|login|auth|登录|expire/i.test(sdkErrorText(err)))
           Bot.makeLog("error", `${data.self_id} 登录状态已失效，请使用 #抖音bot登录 重新扫码`, data.self_id)
         rets.error.push(err)
       }
@@ -1140,12 +1158,12 @@ const adapter = new (class DouYinAdapter {
     } catch (err) {
       // 运行期 cookie 失效（get_by_user_init 报 unexpected session length）：移除账号并禁止重连，
       // 避免 SDK 自动重连后仍持续拉取会话列表刷报错
-      if (/session length/i.test(String(err?.message || err))) {
+      if (/session length/i.test(sdkErrorText(err))) {
         this.noReconnect.add(id)
         await this.removeBot(id)
         return Bot.makeLog("error", `${id} 登录状态已失效（cookie 校验失败），账号已移除，请使用 #抖音bot登录 重新扫码`, id)
       }
-      Bot.makeLog("error", ["好友列表获取错误", err], id)
+      Bot.makeLog("error", ["好友列表获取错误", sdkErrorText(err)], id)
     }
   }
 
@@ -1163,12 +1181,12 @@ const adapter = new (class DouYinAdapter {
           })
     } catch (err) {
       // 群列表同样可能报 unexpected session length（cookie 失效）：与 loadFriend 一致，移除账号并禁止重连
-      if (/session length/i.test(String(err?.message || err))) {
+      if (/session length/i.test(sdkErrorText(err))) {
         this.noReconnect.add(id)
         await this.removeBot(id)
         return Bot.makeLog("error", `${id} 登录状态已失效（cookie 校验失败），账号已移除，请使用 #抖音bot登录 重新扫码`, id)
       }
-      Bot.makeLog("error", ["群列表获取错误", err], id)
+      Bot.makeLog("error", ["群列表获取错误", sdkErrorText(err)], id)
     }
   }
 
@@ -1646,10 +1664,10 @@ const adapter = new (class DouYinAdapter {
       groups = await sdk.grp.list()
       ;[friends, self] = await Promise.all([sdk.frd.list(), sdk.user.self()])
     } catch (err) {
-      const invalid = /session length/i.test(String(err?.message || err))
+      const invalid = /session length/i.test(sdkErrorText(err))
       // cookie 失效（session length）时 SDK 反复重试已产生大量 debug 噪音，此处不再重复大堆栈，只提示重登
       if (!invalid)
-        Bot.makeLog("error", [`${this.name}(${this.id}) ${this.version} 连接失败`, err], id)
+        Bot.makeLog("error", [`${this.name}(${this.id}) ${this.version} 连接失败`, sdkErrorText(err)], id)
       if (invalid)
         Bot.makeLog("error", `${id} 登录状态已失效（cookie 校验失败），账号未注册，请使用 #抖音bot登录 重新扫码`, id)
       this.noReconnect.add(id)
@@ -1973,7 +1991,7 @@ export class DouYinAdapter extends plugin {
       this.reply("账号连接失败", true)
       return false
     } catch (err) {
-      this.reply(`登录失败：${err.message || err}`, true)
+      this.reply(`登录失败：${sdkErrorText(err) || String(err)}`, true)
       return false
     } finally {
       adapter.logining = false
