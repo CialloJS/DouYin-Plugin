@@ -13,6 +13,14 @@
 - 发送失败提示可读化：`msg.send` / `msg.reply` 的传输层异常（`SdkError`）转成 `发送失败：<原因>` 上抛，业务拒绝仍按返回的 `statusCode` / `statusMsg` 上报
 - 消息发送与登录流程无需改动：`send` / `recall` 仍以 `statusCode` 返回业务结果，`ForwardNode`、媒体资源对象、`BotOpts`、`login()` 回调与 `session` 字段均与 `0.6.8` 一致
 
+### 修复
+
+- 二次验证后只提示「登录失败：sdk」：`sdkErrorText()` 改为逐层提取 `data` 中的描述字段（`errorDesc` / `description` / `message` 等）与关键状态（`error_code` / `status` / `timeout` 等），并在无匹配字段时回退 JSON 文本，不再只剩 `sdk`
+- 频控失败提示：SDK 遇 `check_qrconnect error_code=7` 只抛 `{ fatal: true }`（服务端文案仅打印在 SDK 自己的 warn 日志里），插件侧改为提示「请求过于频繁（服务端频控限制），请等待几分钟后重新发起」，不再显示 `sdk`
+- 登录超时单独提示：SDK 扫码轮询窗口固定 120s，二维码未扫或二次验证未及时完成时提示「登录超时，请重新发起」；二次验证等待窗口由 5 分钟对齐到 2 分钟、短信提示附带时限，失败可及时反馈
+- 补齐 0.6.9 登录回调：新增 `onStatus` 同步扫码/验证进度（如「短信验证通过」「请前往抖音 App 完成安全验证」），新增 `onVerifyUrl` 把风控验证页地址转给用户
+- 登录结束后清理未消费的二次验证等待，避免 `accept` 继续拦截用户后续普通消息
+
 ### 版本
 
 - 插件版本 `1.1.1` → `1.2.0`

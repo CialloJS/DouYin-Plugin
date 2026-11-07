@@ -19,16 +19,36 @@ const sdkSendable = new Set(["text", "image", "video", "file", "emoji", "share",
 // 富文本转义：嵌套合并转发需递归拼 HTML，在 JS 侧生成时防止昵称/文本注入标签
 const escHtml = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
 
-// douyin.ts 0.6.9 起失败统一抛 SdkError（message 恒为 "sdk"），真实原因在 data（服务端响应体 / 业务错误码）里；
-// 拼成可读文本，供日志展示与「登录态失效」判定使用
+// douyin.ts 0.6.9 起失败统一抛 SdkError（message 恒为 "sdk"），真实原因在 data（服务端响应体 / 校验对象 / 原生错误）里；
+// 逐层提取描述字段与关键状态，供日志展示与「登录态失效」判定使用，避免只显示 "sdk"
+const SDK_DESC_KEYS = ["errorDesc", "error_desc", "statusMsg", "status_msg", "description", "error_message", "msg", "message"]
+const SDK_META_KEYS = ["error_code", "status_code", "status", "timeout", "fatal", "chosen", "userId"]
 function sdkErrorText(err) {
   if (!err) return ""
-  const { message, data } = err
-  const text = [message]
-  if (typeof data === "string") text.push(data)
-  else if (data instanceof Uint8Array) text.push(Buffer.from(data).toString())
-  else if (data && typeof data === "object") text.push(data.errorDesc, data.statusMsg, data.status_msg, data.message)
-  return text.filter(i => typeof i === "string" && i).join(" ")
+  if (typeof err === "string") return err
+  const out = []
+  const walk = (v, depth) => {
+    if (!v || depth > 2) return
+    if (typeof v === "string") return out.push(v)
+    if (v instanceof Uint8Array) return out.push(Buffer.from(v).toString())
+    if (typeof v !== "object") return
+    for (const k of SDK_DESC_KEYS)
+      if (typeof v[k] === "string" && v[k]) out.push(v[k])
+    for (const k of SDK_META_KEYS)
+      if (v[k] != null && typeof v[k] !== "object") out.push(`${k}=${v[k]}`)
+    for (const k of ["data", "result", "response", "body"])
+      if (v[k] && typeof v[k] === "object" && !(v[k] instanceof Uint8Array)) walk(v[k], depth + 1)
+  }
+  walk(err, 0)
+  // SdkError.message 恒为 "sdk"，过滤掉以免只剩无意义文本
+  let text = [...new Set(out.filter(i => i !== "sdk"))].join(" ")
+  if (!text) {
+    try {
+      text = JSON.stringify(err?.data ?? err) ?? ""
+    } catch {}
+    if (text === "{}") text = ""
+  }
+  return text || "未知错误（服务端未返回原因）"
 }
 
 // 抖音资源代理：抖音 CDN 直链校验 Referer/Cookie，外部（Chromium 渲染、其它插件）直连会 403；
@@ -1958,7 +1978,18 @@ export class DouYinAdapter extends plugin {
           )
           this.reply(["请使用抖音 App 扫码登录", segment.image(`base64://${base64}`)])
         },
-        // 触发短信/密码二次验证：交互式等待用户直接回复验证码/密码，5 分钟超时
+        // 扫码/验证进度：SDK 的中文提示（已扫码、短信验证通过、需在 App 完成安全验证等）直接同步给发起人，
+        // 避免二次验证后长时间无反馈，最后只看到一句失败
+        onStatus: s => {
+          if (/[\u4e00-\u9fa5]/.test(s)) return this.reply(s, true)
+          Bot.makeLog("debug", `登录状态：${s}`, "DouYin")
+        },
+        // 风控/滑块验证：SDK 起本地验证页并回传地址，转给用户用浏览器完成
+        onVerifyUrl: url => {
+          if (this.e.adapter_id === "stdin") return logger.info(`登录需要完成安全验证，请用浏览器打开：${url}`)
+          this.reply(`登录需要完成安全验证，请用浏览器打开：${url}`, true)
+        },
+        // 触发短信/密码二次验证：交互式等待用户直接回复验证码/密码
         onMfa: info =>
           new Promise((resolve, reject) => {
             const wait = { kind: info.kind, resolve, reject, userId: this.e.user_id }
@@ -1966,15 +1997,16 @@ export class DouYinAdapter extends plugin {
               this.reply("登录触发密码二次验证，请直接回复账号密码完成验证", true)
             else
               this.reply(
-                `登录触发短信二次验证，验证码已发送${info.maskedMobile ? `（尾号 ${info.maskedMobile.slice(-4)}）` : ""}，请直接回复 6 位验证码`,
+                `登录触发短信二次验证，验证码已发送${info.maskedMobile ? `（尾号 ${info.maskedMobile.slice(-4)}）` : ""}，请直接回复 6 位验证码（登录流程限时 2 分钟，请尽快回复）`,
                 true,
               )
             adapter.mfaWait = wait
+            // SDK 扫码轮询窗口固定 120s，超时后必然登录失败；等待窗口与之对齐，失败才能及时反馈
             setTimeout(() => {
               if (adapter.mfaWait !== wait) return
               adapter.mfaWait = null
               reject(new Error("二次验证等待超时"))
-            }, 5 * 60000)
+            }, 2 * 60000)
           }),
       })
 
@@ -1991,10 +2023,27 @@ export class DouYinAdapter extends plugin {
       this.reply("账号连接失败", true)
       return false
     } catch (err) {
-      this.reply(`登录失败：${sdkErrorText(err) || String(err)}`, true)
+      const why = sdkErrorText(err)
+      // SDK 扫码轮询窗口固定 120s：二维码长时间未扫、或二次验证未及时完成都以 timeout 结束
+      if (/timeout/i.test(why)) {
+        this.reply("登录失败：登录超时（二维码未扫描或二次验证未及时完成），请重新发起 #抖音bot登录", true)
+        return false
+      }
+      // SDK 对频控（error_code=7 访问太频繁）只抛 { fatal: true }，服务端文案在上一条 console warn 里拿不到
+      if (/fatal=true/.test(why)) {
+        this.reply("登录失败：请求过于频繁（服务端频控限制），请等待几分钟后重新发起 #抖音bot登录", true)
+        return false
+      }
+      this.reply(`登录失败：${why}`, true)
       return false
     } finally {
       adapter.logining = false
+      // 登录已结束：清掉未消费的二次验证等待，避免 accept 继续拦截用户后续普通消息
+      if (adapter.mfaWait) {
+        const wait = adapter.mfaWait
+        adapter.mfaWait = null
+        wait.reject(new Error("登录流程已结束"))
+      }
     }
   }
 
