@@ -1895,9 +1895,18 @@ const adapter = new (class DouYinAdapter {
   }
 
   async load() {
-    // 账号已在插件加载阶段开始连接，这里等待连接完成
+    // 账号已在插件加载阶段开始连接，这里只做限时等待：抖音连接包含设备注册与好友/群全量翻页，
+    // 会话多的账号可能超过框架的适配器加载超时（JiuLi 默认 60s，超时会 warn「初始化超过 60 秒」并放行）；
+    // 到点先让启动继续，连接仍在后台完成，完成后照常注册 Bot[id] 并 emit connect 事件
     Bot.makeLog("debug", "适配器加载阶段，等待账号连接完成", this.id)
-    await connecting
+    let timer
+    const expired = new Promise(resolve => {
+      timer = setTimeout(() => resolve(false), 3e4)
+      timer.unref?.()
+    })
+    const done = await Promise.race([connecting.then(() => true), expired])
+    clearTimeout(timer)
+    if (!done) Bot.makeLog("info", "账号仍在后台连接，完成后自动上线，可稍后用 #抖音bot账号 查看", this.id)
   }
 })()
 
